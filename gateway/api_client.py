@@ -1,4 +1,3 @@
-import time
 import requests
 
 
@@ -18,13 +17,10 @@ class ApiClient:
             return False, None, str(exc)
 
     def test_connection(self) -> tuple[bool, str]:
+        # The existing ingestion API is used for the connectivity test.
         ok, status, message = self.send("gateway_test", 0.0, "status")
         if status == 200:
             return True, "Backend accepted device key"
         if status == 401:
             return False, "Invalid or disabled device key"
         return ok, f"HTTP {status}: {message}" if status else f"Backend unavailable: {message}"
-
-    @staticmethod
-    def backoff(attempt: int) -> float:
-        return min(30.0, (1.5 ** attempt))

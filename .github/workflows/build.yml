@@ -1,0 +1,33 @@
+name: Build MAINTAIN AI IoT Gateway
+
+on:
+  push:
+    branches: [main, implementation6]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest
+      - run: pytest -q
+
+  build-windows:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --name "MAINTAIN AI IoT Gateway" gateway.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maintain-ai-iot-gateway-windows
+          path: 'dist/MAINTAIN AI IoT Gateway.exe'

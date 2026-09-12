@@ -25,9 +25,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --name "MAINTAIN AI IoT Gateway" gateway.py
-      - uses: actions/upload-artifact@v4
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pyinstaller
+      - name: Build Windows executable
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name "MAINTAIN AI IoT Gateway" gateway.py
+      - name: Read application version
+        shell: pwsh
+        run: |
+          $line = Select-String -Path gateway/__init__.py -Pattern '__version__' | Select-Object -First 1
+          if (-not $line) { throw 'Could not find __version__ in gateway/__init__.py' }
+          $version = [regex]::Match($line.Line, '"([^"]+)"').Groups[1].Value
+          if (-not $version) { throw 'Could not parse application version' }
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Building version $version"
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found at $iscc" }
+          & $iscc "/DMyAppVersion=$env:APP_VERSION" "installer\maintain-ai-iot-gateway.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
         with:
           name: maintain-ai-iot-gateway-windows
           path: 'dist/MAINTAIN AI IoT Gateway.exe'
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintain-ai-iot-gateway-installer
+          path: 'installer/installer-output/MAINTAIN-AI-IoT-Gateway-Setup.exe'

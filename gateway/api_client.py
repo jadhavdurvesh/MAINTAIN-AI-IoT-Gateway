@@ -91,9 +91,17 @@ class ApiClient:
             return False, None, str(exc)
 
     def test_connection(self) -> tuple[bool, str]:
-        ok, status, message = self.send("gateway_test", 0.0, "status")
-        if status == 200:
-            return True, "Backend accepted device key"
-        if status == 401:
-            return False, "Invalid or disabled device key"
-        return ok, f"HTTP {status}: {message}" if status else f"Backend unavailable: {message}"
+        try:
+            response = requests.post(
+                self.url.removesuffix("/api/devices/ingest").rstrip("/") + "/api/devices/ping",
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            if response.ok:
+                data = response.json()
+                return True, f"Backend accepted device key for {data.get('machine', 'machine')}"
+            if response.status_code == 401:
+                return False, "Invalid or disabled device key"
+            return False, f"HTTP {response.status_code}: {response.text[:200]}"
+        except requests.RequestException as exc:
+            return False, f"Backend unavailable: {exc}"

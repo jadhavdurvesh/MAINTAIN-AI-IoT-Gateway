@@ -42,6 +42,7 @@ Multiple serial devices can be connected to the same gateway at the same time, w
 - Temperature, humidity and other supported sensor readings
 - Machine-specific IoT device keys
 - HTTPS upload to `/api/devices/ingest`
+- Non-mutating device-key connectivity checks
 - Connection and backend status
 - Live sensor readings
 - Basic logging
@@ -52,9 +53,7 @@ The first hardware demonstration uses a DH11-style temperature/humidity sensor c
 
 ## Backend
 
-Production API:
-
-`https://maintain-ai-3.vercel.app/api/devices/ingest`
+The gateway backend endpoint is configurable through `MAINTAIN_AI_API_URL`. The current development default points at the Maintain.ai deployment's `/api/devices/ingest` endpoint.
 
 Each upload uses the machine's IoT device key through:
 

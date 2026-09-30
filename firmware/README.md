@@ -1,36 +1,33 @@
-# Maintain AI Firmware
+# Maintain AI machine firmware
 
-This folder contains reference firmware for physical sensor nodes that connect to the **MAINTAIN AI IoT Gateway** over USB serial.
+Each machine has an individual Arduino and ESP32 sketch under `arduino/<machine>/` and `esp32/<machine>/`. The sketches use the shared runtime in `common/` so transport, sequencing and sensor drivers stay consistent.
 
-The firmware is intentionally gateway-oriented: the microcontroller reads sensors and emits one JSON telemetry object per line. The Gateway owns authentication, machine pairing, buffering, retries, and HTTPS upload to Maintain AI.
+## Supported physical drivers
 
-## Supported examples
+- ADXL345 over I2C: vibration/acceleration RMS in g
+- INA219 over I2C: bus voltage and current using a 0.1-ohm shunt assumption
+- DS18B20 1-Wire: temperature
+- HX711: load-cell force/weight after calibration
+- Hall/encoder pulse inputs: RPM and flow
+- Conditioned analog inputs: industrial transmitter/controller outputs
+- Digital inputs: machine state/status
 
-- `arduino/maintain_ai_arduino.ino` — Arduino Mega/Uno-class boards using serial output. Configure the sensor blocks at the top of the file.
-- `esp32/maintain_ai_esp32.ino` — ESP32 using USB serial output. It uses the same serial contract, so the same Gateway can receive either board.
+## Defaults
 
-## Serial contract
+ESP32: I2C SDA=21, SCL=22; DS18B20=GPIO4; HX711 DOUT=16, SCK=17; pulse inputs=18,19,23,5. Arduino uses its board-defined SDA/SCL and the documented pulse/analog mappings. Change the shared hardware configuration for the actual board and wiring before deployment.
 
-Each reading is one JSON object terminated by `\\n`, for example:
+## Safety
 
-```json
-{"reading_type":"temperature","value":29.30,"unit":"C"}
-{"reading_type":"humidity","value":57.20,"unit":"%"}
-```
+Never connect mains voltage, motor terminals, hazardous thermocouple wiring, or industrial current loops directly to an MCU pin. Use a correctly rated isolated transducer, signal conditioner, fuse/protection and appropriate grounding. The firmware assumes the signal presented to an analog input is already safe and conditioned.
 
-The Gateway adds the device identity, timestamp/event metadata as required by its transport contract, and sends the readings to the Maintain AI ingest API.
+## Calibration
 
-## Sensor flexibility
+Do not ship with guessed engineering ranges. Update the calibration constants and machine wiring for the actual installed sensor. For HX711, determine zero offset and scale from a known reference. For RPM/flow, set pulses-per-revolution/litre to the installed sensor specification. The INA219 driver assumes a 0.1-ohm shunt; use the installed shunt's actual value or a suitable industrial current transducer instead.
 
-The examples are deliberately structured around small `readSensors()` functions. To add a sensor:
+## Telemetry
 
-1. Include its Arduino library if required.
-2. Configure its pins/address near the top of the sketch.
-3. Read it inside `readSensors()`.
-4. Call `sendReading("<Maintain AI signal>", value, "<unit>")`.
+Every one-second sample emits JSON with `reading_type`, `value`, `unit`, `quality` and a monotonic `sequence`. Hardware drivers are preferred; when an optional driver is absent, the runtime reports `quality=fallback_analog` rather than silently pretending a hardware driver is present.
 
-Use signal names accepted by the Gateway's canonical signal catalog, such as `temperature`, `humidity`, `vibration`, `current`, `voltage`, `pressure`, `flow`, `speed`, `load`, `rpm`, `motor_current`, `motor_temperature`, `spindle_rpm`, `spindle_load`, `nozzle_temperature`, `bed_temperature`, and `chamber_temperature`.
+## Gateway boundary
 
-## Important
-
-Do not put Supabase credentials, Vercel credentials, or the Gateway device key into these sketches. Device authentication belongs in the Gateway application. The microcontroller only needs to produce sensor readings.
+The microcontroller emits sensor telemetry only. Authentication, device identity, buffering, retries and HTTPS upload remain in the Gateway application. Never put Supabase, Vercel or Gateway secrets in firmware.

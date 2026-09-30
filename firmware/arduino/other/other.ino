@@ -1,5 +1,5 @@
 #include <Arduino.h>
 #include "../../common/maintain_ai_node.h"
-// Other equipment: temperature, vibration, current, load.
-void setup(){Serial.begin(115200);maintainReady("other");}
-void loop(){/* Configure only the physical sensors installed on this equipment. */}
+MaiSignal s[]={MAI_ANALOG("temperature",0),MAI_ANALOG("vibration",1),MAI_ANALOG("current",2),MAI_ANALOG("load",3)};
+void setup(){maiBegin("other",s,sizeof(s)/sizeof(s[0]));}
+void loop(){maiPoll(s,sizeof(s)/sizeof(s[0]));}

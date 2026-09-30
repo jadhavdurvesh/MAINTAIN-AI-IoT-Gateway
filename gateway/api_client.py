@@ -3,6 +3,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -10,11 +11,27 @@ QUEUE_DIR = Path.home() / ".maintain-ai-iot-gateway"
 QUEUE_FILE = QUEUE_DIR / "telemetry_queue.sqlite3"
 
 
+def normalize_ingest_url(url: str) -> str:
+    value = (url or "").strip().rstrip("/")
+    if not value:
+        return ""
+    parts = urlsplit(value)
+    path = parts.path.rstrip("/")
+    if path.endswith("/api/devices/ingest"):
+        return value
+    if path.endswith("/api/devices"):
+        path += "/ingest"
+    else:
+        path += "/api/devices/ingest"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
 class ApiClient:
     def __init__(self, url: str, device_key: str, timeout: float = 10):
-        self.url = url
-        self.device_key = device_key
+        self.url = normalize_ingest_url(url)
+        self.device_key = device_key.strip()
         self.timeout = timeout
+        self.session = requests.Session()
         QUEUE_DIR.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(QUEUE_FILE) as db:
             db.execute(
@@ -27,7 +44,7 @@ class ApiClient:
         return {"X-Device-Key": self.device_key, "Content-Type": "application/json"}
 
     def _post(self, payload: dict) -> requests.Response:
-        return requests.post(self.url, json=payload, headers=self._headers(), timeout=self.timeout)
+        return self.session.post(self.url, json=payload, headers=self._headers(), timeout=self.timeout)
 
     def _queue(self, event_id: str, payload: dict) -> None:
         with sqlite3.connect(QUEUE_FILE) as db:
@@ -38,11 +55,8 @@ class ApiClient:
 
     def _flush_queue(self) -> None:
         with sqlite3.connect(QUEUE_FILE) as db:
-            rows = db.execute(
-                "SELECT id, event_id, payload FROM telemetry_queue ORDER BY id LIMIT 100"
-            ).fetchall()
-
-        for row_id, event_id, raw_payload in rows:
+            rows = db.execute("SELECT id, payload FROM telemetry_queue ORDER BY id LIMIT 100").fetchall()
+        for row_id, raw_payload in rows:
             try:
                 response = self._post(json.loads(raw_payload))
             except requests.RequestException:
@@ -51,24 +65,15 @@ class ApiClient:
                 with sqlite3.connect(QUEUE_FILE) as db:
                     db.execute("DELETE FROM telemetry_queue WHERE id = ?", (row_id,))
                 continue
-            if 500 <= response.status_code:
+            if response.status_code == 408 or response.status_code >= 500:
                 return
-            # Permanent client-side validation/auth failures should not block
-            # the rest of the queue forever.
             if 400 <= response.status_code < 500:
                 with sqlite3.connect(QUEUE_FILE) as db:
                     db.execute("DELETE FROM telemetry_queue WHERE id = ?", (row_id,))
                 continue
             return
 
-    def send(
-        self,
-        reading_type: str,
-        value: float,
-        unit: str,
-        event_id: str | None = None,
-        recorded_at: str | None = None,
-    ) -> tuple[bool, int | None, str]:
+    def send(self, reading_type: str, value: float, unit: str, event_id: str | None = None, recorded_at: str | None = None) -> tuple[bool, int | None, str]:
         event_id = event_id or str(uuid.uuid4())
         payload = {
             "reading_type": reading_type,
@@ -77,13 +82,12 @@ class ApiClient:
             "event_id": event_id,
             "recorded_at": recorded_at or datetime.now(timezone.utc).isoformat(),
         }
-
         try:
             self._flush_queue()
             response = self._post(payload)
             if response.ok or response.status_code == 409:
                 return True, response.status_code, response.text[:200]
-            if 500 <= response.status_code or response.status_code == 408:
+            if response.status_code == 408 or response.status_code >= 500:
                 self._queue(event_id, payload)
             return False, response.status_code, response.text[:200]
         except requests.RequestException as exc:
@@ -91,12 +95,11 @@ class ApiClient:
             return False, None, str(exc)
 
     def test_connection(self) -> tuple[bool, str]:
+        if not self.url:
+            return False, "MAINTAIN AI API URL is empty"
         try:
-            response = requests.post(
-                self.url.removesuffix("/api/devices/ingest").rstrip("/") + "/api/devices/ping",
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
+            base = self.url.removesuffix("/api/devices/ingest").rstrip("/")
+            response = self.session.post(base + "/api/devices/ping", headers=self._headers(), timeout=self.timeout)
             if response.ok:
                 data = response.json()
                 return True, f"Backend accepted device key for {data.get('machine', 'machine')}"

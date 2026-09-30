@@ -10,11 +10,7 @@ from protocol.parser import parse_line
 
 
 class SerialManager:
-    """Serial reader with bounded automatic reconnect.
-
-    A physical USB/Arduino disconnect should not require restarting the gateway.
-    Explicit disconnect() disables the reconnect loop.
-    """
+    """Serial reader with bounded automatic reconnect for physical gateways."""
     def __init__(self, baud_rate: int = 115200, reconnect: bool = True):
         self.baud_rate = baud_rate
         self.reconnect_enabled = reconnect
@@ -46,20 +42,17 @@ class SerialManager:
             self._serial = serial.Serial(self._port, self.baud_rate, timeout=1)
 
     def _read_loop(self) -> None:
-        reported_disconnect = False
+        first_failure_reported = False
         while not self._stop.is_set():
             try:
                 self._open()
-                reported_disconnect = False
+                first_failure_reported = False
                 while not self._stop.is_set() and self._serial and self._serial.is_open:
                     line = self._serial.readline().decode("utf-8", errors="replace")
                     payload = parse_line(line)
                     if payload is not None and self._on_payload:
                         self._on_payload(payload)
             except (serial.SerialException, OSError) as exc:
-                if not reported_disconnect and self._on_error:
-                    self._on_error(str(exc))
-                    reported_disconnect = True
                 with self._lock:
                     try:
                         if self._serial:
@@ -68,12 +61,20 @@ class SerialManager:
                         pass
                     self._serial = None
                 if not self.reconnect_enabled:
+                    if self._on_error:
+                        self._on_error(str(exc))
                     break
+                # The UI treats this as a transient link loss and leaves the
+                # reconnect worker alive. Do not call the fatal error callback,
+                # because that callback intentionally performs an explicit
+                # disconnect in older gateway builds.
+                if not first_failure_reported and self._on_error:
+                    self._on_error(f"temporary serial link loss: {exc}")
+                    first_failure_reported = True
                 for _ in range(20):
                     if self._stop.is_set():
                         return
                     time.sleep(0.1)
-                # The next loop retries the same saved port.
             except Exception as exc:
                 if self._on_error:
                     self._on_error(str(exc))

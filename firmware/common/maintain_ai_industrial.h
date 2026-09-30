@@ -19,12 +19,15 @@ class MaiMax31855 {
   uint32_t read32(){digitalWrite(cs_,LOW);uint32_t v=0;for(uint8_t i=0;i<4;i++)v=(v<<8)|SPI.transfer(0);digitalWrite(cs_,HIGH);return v;}
 public:
   explicit MaiMax31855(uint8_t cs=MAI_MAX31855_CS):cs_(cs){}
-  void begin(){pinMode(cs_,OUTPUT);digitalWrite(cs_,HIGH);#if defined(ESP32)
+  void begin(){
+    pinMode(cs_,OUTPUT);digitalWrite(cs_,HIGH);
+#if defined(ESP32)
     SPI.begin(MAI_MAX31855_SCK,MAI_MAX31855_MISO,MOSI,cs_);
 #else
     SPI.begin();
 #endif
-    ready_=true;}
+    ready_=true;
+  }
   bool readC(float &c){if(!ready_)begin();uint32_t r=read32();if(r&0x00010000UL)return false;int32_t raw=(int32_t)(r>>18);if(raw&0x2000)raw|=~0x3FFF;c=raw*0.25f;return isfinite(c)&&c>-270&&c<1372;}
 };
 

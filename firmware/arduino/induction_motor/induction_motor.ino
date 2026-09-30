@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "../../common/maintain_ai_node.h"
-// Induction motor: temperature, vibration, current, load, rpm.
-void setup(){Serial.begin(115200);maintainReady("induction_motor");}
-void loop(){/* Wire DHT/RTD, accelerometer, current transducer and Hall/encoder. */}
+// Reference wiring: conditioned temperature/vibration/current/load analog outputs + Hall/encoder RPM.
+MaiSignal s[]={MAI_ANALOG("temperature",0),MAI_ANALOG("vibration",1),MAI_ANALOG("current",2),MAI_ANALOG("load",3),MAI_PULSE("rpm",0)};
+void setup(){maiBegin("induction_motor",s,sizeof(s)/sizeof(s[0]));}
+void loop(){maiPoll(s,sizeof(s)/sizeof(s[0]));}

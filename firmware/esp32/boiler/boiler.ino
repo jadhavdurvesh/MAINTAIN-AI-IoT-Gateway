@@ -1,5 +1,5 @@
 #include <Arduino.h>
 #include "../../common/maintain_ai_node.h"
-// ESP32 Boiler: pressure, temperature, flow, steam quality, flame state, fuel/air flow, burner load.
-void setup(){Serial.begin(115200);maintainReady("boiler");}
-void loop(){/* Industrial transducer and flame/controller interfaces. */}
+MaiSignal s[]={MAI_ANALOG("pressure",0),MAI_ANALOG("temperature",1),MAI_PULSE("flow",0),MAI_ANALOG("steam_quality",2),MAI_DIGITAL("flame_state",3),MAI_PULSE("fuel_flow",1),MAI_PULSE("air_flow",2),MAI_ANALOG("burner_load",4)};
+void setup(){maiBegin("boiler",s,sizeof(s)/sizeof(s[0]));}
+void loop(){maiPoll(s,sizeof(s)/sizeof(s[0]));}

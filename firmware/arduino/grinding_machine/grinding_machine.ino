@@ -1,5 +1,5 @@
 #include <Arduino.h>
 #include "../../common/maintain_ai_node.h"
-// Grinding: spindle rpm/load, vibration, temperature, wheel speed/life, dressing, coolant flow.
-void setup(){Serial.begin(115200);maintainReady("grinding_machine");}
-void loop(){/* Use spindle encoder, accelerometer, temperature, wheel/controller and flow sensors. */}
+MaiSignal s[]={MAI_PULSE("spindle_rpm",0),MAI_ANALOG("grinding_load",0),MAI_ANALOG("vibration",1),MAI_ANALOG("temperature",2),MAI_PULSE("wheel_speed",1),MAI_ANALOG("wheel_life",3),MAI_DIGITAL("dressing",4),MAI_PULSE("coolant_flow",2)};
+void setup(){maiBegin("grinding_machine",s,sizeof(s)/sizeof(s[0]));}
+void loop(){maiPoll(s,sizeof(s)/sizeof(s[0]));}

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "../../common/maintain_ai_node.h"
-// Conveyor: temperature, vibration, current, load, speed.
-void setup(){Serial.begin(115200);maintainReady("conveyor");}
-void loop(){/* Wire temperature sensor, accelerometer, current/load transducer and encoder. */}
+// Reference wiring: motor condition sensors plus encoder/shaft speed input.
+MaiSignal s[]={MAI_ANALOG("temperature",0),MAI_ANALOG("vibration",1),MAI_ANALOG("current",2),MAI_ANALOG("load",3),MAI_PULSE("speed",0)};
+void setup(){maiBegin("conveyor",s,sizeof(s)/sizeof(s[0]));}
+void loop(){maiPoll(s,sizeof(s)/sizeof(s[0]));}

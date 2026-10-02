@@ -11,12 +11,14 @@ from PySide6.QtWidgets import (
 
 from gateway.config import delete_device_key, get_device_key, load_config, save_config, set_device_key
 from gateway.device_manager import DeviceManager
+from gateway.serial_manager import SerialManager
 from protocol.validator import validate_readings
 
 
 class DeviceSignals(QObject):
     readings = Signal(str, dict)
     error = Signal(str, str)
+    upload_result = Signal(str, int, list)
 
 
 class AddDeviceDialog(QDialog):
@@ -67,7 +69,7 @@ class MainWindow(QMainWindow):
         super().__init__(); self.setWindowTitle("MAINTAIN AI — Physical IoT Gateway"); self.resize(1220, 800)
         self.config = load_config(); self.api_url = self.config["api_url"]
         self.devices = {}; self.cards = {}
-        self.signals = DeviceSignals(); self.signals.readings.connect(self.handle_readings); self.signals.error.connect(self.handle_device_error)
+        self.signals = DeviceSignals(); self.signals.readings.connect(self.handle_readings); self.signals.error.connect(self.handle_device_error); self.signals.upload_result.connect(self.handle_upload_result)
         self.build_ui(); self.restore_devices(); self.refresh_ports()
         self.port_timer = QTimer(self); self.port_timer.timeout.connect(self.refresh_ports); self.port_timer.start(3000)
 
@@ -109,7 +111,7 @@ class MainWindow(QMainWindow):
     def make_stat(self, name, value):
         card = QFrame(); card.setObjectName("stat"); box = QVBoxLayout(card); box.setContentsMargins(15,10,15,10); lab = QLabel(name); lab.setObjectName("statLabel"); val = QLabel(value); val.setObjectName("statValue"); box.addWidget(lab); box.addWidget(val); card.value_label = val; return card
 
-    def ports(self): return [d.port for d in DeviceManager(self.api_url).serial.scan()]
+    def ports(self): return [d.port for d in SerialManager.scan()]
 
     def restore_devices(self):
         for saved in self.config.get("devices", []):
@@ -170,13 +172,13 @@ class MainWindow(QMainWindow):
     def remove_device(self,did):
         data=self.devices.get(did)
         if not data:return
-        data["manager"].disconnect(); delete_device_key(did); self.cards[did].deleteLater(); self.cards.pop(did,None); self.devices.pop(did,None); self.persist(); self.empty.setVisible(not self.devices); self.update_summary()
+        data["manager"].close(); delete_device_key(did); self.cards[did].deleteLater(); self.cards.pop(did,None); self.devices.pop(did,None); self.persist(); self.empty.setVisible(not self.devices); self.update_summary()
 
     def connect_device(self,did):
         data=self.devices[did]; key=get_device_key(did); rec=data["config"]
         if not key: QMessageBox.warning(self,"Device key","No device key is stored for this machine."); return
         try:
-            data["manager"].api_url=self.backend.text().strip() or self.api_url; data["manager"].set_device_key(key); data["manager"].baud_rate=int(rec.get("baud_rate",115200)); data["manager"].serial.baud_rate=data["manager"].baud_rate; data["manager"].set_protocol(rec.get("protocol","json"))
+            data["manager"].set_api_url(self.backend.text().strip() or self.api_url); data["manager"].set_device_key(key); data["manager"].baud_rate=int(rec.get("baud_rate",115200)); data["manager"].serial.baud_rate=data["manager"].baud_rate; data["manager"].set_protocol(rec.get("protocol","json"))
             data["manager"].serial.connect(rec["port"],lambda p,d=did:self.signals.readings.emit(d,p),lambda m,d=did:self.signals.error.emit(d,m))
             data["status"].setText("● Connected · auto-reconnect enabled"); data["connect"].setEnabled(False); data["disconnect"].setEnabled(True); data["info"].setText("USB connected · waiting for telemetry"); self.update_summary()
         except Exception as exc: QMessageBox.critical(self,"Connection failed",str(exc))
@@ -191,15 +193,31 @@ class MainWindow(QMainWindow):
         if not data:return
         readings=validate_readings(payload)
         if not readings: data["info"].setText("Received serial data, but no valid telemetry signals were found"); return
-        failures=[]
         for name,value,unit in readings:
             data["readings"][name]=(value,unit)
-            ok,status,msg=data["manager"].api().send(name,value,unit)
-            if not ok: failures.append(f"{name}: {status or msg}")
         self.rebuild_reading_cards(did)
-        if failures: data["status"].setText("● Upload retry queued"); data["info"].setText("Some readings were queued locally · "+"; ".join(failures[:3]))
-        else:
-            data["status"].setText("● Connected · telemetry flowing"); data["uploads"]+=len(readings); data["last_upload"]=datetime.now(); data["info"].setText(f"Last upload {data['last_upload'].strftime('%H:%M:%S')} · {len(readings)} reading(s)"); self.update_summary()
+        data["status"].setText("● Connected · telemetry flowing")
+        data["info"].setText("Telemetry received · uploading in background")
+        data["manager"].send_readings(
+            readings,
+            lambda sent, failures, d=did: self.signals.upload_result.emit(d, sent, failures),
+        )
+
+    def handle_upload_result(self, did, sent, failures):
+        data = self.devices.get(did)
+        if not data:
+            return
+        if failures:
+            data["status"].setText("● Connected · upload retry queued")
+            data["info"].setText("Some readings were queued locally · " + "; ".join(failures[:3]))
+        elif sent:
+            data["uploads"] += sent
+            data["last_upload"] = datetime.now()
+            data["status"].setText("● Connected · telemetry flowing")
+            data["info"].setText(
+                f"Last upload {data['last_upload'].strftime('%H:%M:%S')} · {sent} reading(s)"
+            )
+        self.update_summary()
 
     def handle_device_error(self,did,message):
         data=self.devices.get(did)
@@ -228,7 +246,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self,event):
         self.persist()
-        for data in self.devices.values(): data["manager"].disconnect()
+        for data in self.devices.values(): data["manager"].close()
         event.accept()
 
 

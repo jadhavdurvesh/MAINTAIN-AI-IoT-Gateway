@@ -19,4 +19,11 @@ def parse_line(line: str) -> dict[str, Any] | None:
 
     # Marlin firmware reports temperatures as plain text, for example:
     # "ok T:28.38 /0.00 B:26.16 /0.00 @:0 B@:0"
-    return parse_temperature_report(text)
+    marlin = parse_temperature_report(text)
+    if marlin is not None:
+        # B@ is Marlin bed-heater power; parse it separately from B (bed temp).
+        match = __import__("re").search(r"\bB@\s*:\s*(-?(?:\d+(?:\.\d*)?|\.\d+))", text, __import__("re").IGNORECASE)
+        if match:
+            marlin["bed_heater_power"] = float(match.group(1))
+        return marlin
+    return None

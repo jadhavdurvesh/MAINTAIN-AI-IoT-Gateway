@@ -49,6 +49,7 @@ SIGNALS: dict[str, tuple[str, float, float]] = {
     "nozzle_temperature": ("°C", -50.0, 500.0), "bed_temperature": ("°C", -50.0, 300.0), "chamber_temperature": ("°C", -50.0, 300.0),
     "hotend_current": ("A", 0.0, 1_000_000.0), "fan_speed": ("%", 0.0, 100.0), "print_speed": ("mm/s", 0.0, 1_000_000.0),
     "extrusion_rate": ("mm³/s", 0.0, 1_000_000.0), "print_progress": ("%", 0.0, 100.0),
+    "hotend_heater_power": ("%", 0.0, 255.0), "bed_heater_power": ("%", 0.0, 255.0),
     "hydraulic_pressure": ("Pa", 0.0, 1_000_000_000.0), "injection_pressure": ("Pa", 0.0, 1_000_000_000.0),
     "steam_pressure": ("Pa", 0.0, 1_000_000_000.0), "flow_rate": ("L/min", 0.0, 1_000_000.0),
     "level": ("%", 0.0, 100.0), "utilization": ("%", 0.0, 100.0),
@@ -89,10 +90,6 @@ def validate_readings(payload: dict[str, Any]) -> list[tuple[str, float, str]]:
     if not isinstance(payload, dict):
         return []
 
-    # Native Maintain.ai DeviceOS envelope:
-    # {protocol, protocol_version, device_id, configuration_id, sequence,
-    #  readings: [{sensor_id, parameter_id, value, unit, timestamp_ms}, ...]}
-    # The gateway forwards the parameter_id as the canonical MAINTAIN AI signal.
     envelope_readings = payload.get("readings")
     if isinstance(envelope_readings, list):
         results: list[tuple[str, float, str]] = []

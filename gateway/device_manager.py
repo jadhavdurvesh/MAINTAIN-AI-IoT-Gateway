@@ -6,11 +6,22 @@ from gateway.serial_manager import SerialManager
 class DeviceManager:
     """One independent serial/backend connection for one paired machine."""
 
-    def __init__(self, api_url: str, baud_rate: int = 115200, device_id: str = "default"):
+    def __init__(
+        self,
+        api_url: str,
+        baud_rate: int = 115200,
+        device_id: str = "default",
+        protocol: str = "json",
+    ):
         self.device_id = device_id
-        self.serial = SerialManager(baud_rate)
+        self.serial = SerialManager(baud_rate, protocol=protocol)
         self.api_url = api_url
+        self.protocol = protocol
         self.device_key = get_device_key(device_id)
+
+    def set_protocol(self, protocol: str) -> None:
+        self.protocol = protocol
+        self.serial.protocol = protocol
 
     def set_device_key(self, value: str) -> None:
         self.device_key = value.strip()

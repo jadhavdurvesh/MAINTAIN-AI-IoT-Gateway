@@ -11,9 +11,18 @@ from protocol.parser import parse_line
 
 class SerialManager:
     """Serial reader with bounded automatic reconnect for physical gateways."""
-    def __init__(self, baud_rate: int = 115200, reconnect: bool = True):
+
+    def __init__(
+        self,
+        baud_rate: int = 115200,
+        reconnect: bool = True,
+        protocol: str = "json",
+        poll_interval: float = 2.0,
+    ):
         self.baud_rate = baud_rate
         self.reconnect_enabled = reconnect
+        self.protocol = protocol
+        self.poll_interval = poll_interval
         self._serial = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -24,15 +33,33 @@ class SerialManager:
 
     @staticmethod
     def scan() -> list[SerialDevice]:
-        return [SerialDevice(p.device, p.description or "Serial device", p.manufacturer or "", p.vid, p.pid) for p in list_ports.comports()]
+        return [
+            SerialDevice(
+                p.device,
+                p.description or "Serial device",
+                p.manufacturer or "",
+                p.vid,
+                p.pid,
+            )
+            for p in list_ports.comports()
+        ]
 
-    def connect(self, port: str, on_payload: Callable[[dict], None], on_error: Callable[[str], None]) -> None:
+    def connect(
+        self,
+        port: str,
+        on_payload: Callable[[dict], None],
+        on_error: Callable[[str], None],
+    ) -> None:
         self.disconnect()
         self._port = port
         self._on_payload = on_payload
         self._on_error = on_error
         self._stop.clear()
-        self._thread = threading.Thread(target=self._read_loop, daemon=True, name=f"maintain-serial-{port}")
+        self._thread = threading.Thread(
+            target=self._read_loop,
+            daemon=True,
+            name=f"maintain-serial-{port}",
+        )
         self._thread.start()
 
     def _open(self):
@@ -40,18 +67,38 @@ class SerialManager:
             if self._serial and self._serial.is_open:
                 return
             self._serial = serial.Serial(self._port, self.baud_rate, timeout=1)
+            if self.protocol == "marlin":
+                self._serial.write(b"M105\n")
+                self._serial.flush()
+
+    def _poll_marlin(self) -> None:
+        if self.protocol != "marlin":
+            return
+        with self._lock:
+            if self._serial and self._serial.is_open:
+                self._serial.write(b"M105\n")
+                self._serial.flush()
 
     def _read_loop(self) -> None:
         first_failure_reported = False
+        next_poll = 0.0
+
         while not self._stop.is_set():
             try:
                 self._open()
                 first_failure_reported = False
+                next_poll = time.monotonic()
+
                 while not self._stop.is_set() and self._serial and self._serial.is_open:
+                    if self.protocol == "marlin" and time.monotonic() >= next_poll:
+                        self._poll_marlin()
+                        next_poll = time.monotonic() + self.poll_interval
+
                     line = self._serial.readline().decode("utf-8", errors="replace")
                     payload = parse_line(line)
                     if payload is not None and self._on_payload:
                         self._on_payload(payload)
+
             except (serial.SerialException, OSError) as exc:
                 with self._lock:
                     try:
@@ -64,10 +111,6 @@ class SerialManager:
                     if self._on_error:
                         self._on_error(str(exc))
                     break
-                # The UI treats this as a transient link loss and leaves the
-                # reconnect worker alive. Do not call the fatal error callback,
-                # because that callback intentionally performs an explicit
-                # disconnect in older gateway builds.
                 if not first_failure_reported and self._on_error:
                     self._on_error(f"temporary serial link loss: {exc}")
                     first_failure_reported = True

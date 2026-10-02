@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -27,8 +31,10 @@ jobs:
           python-version: '3.12'
       - name: Install Python dependencies
         run: pip install -r requirements.txt pyinstaller
+
       - name: Build Windows executable
         run: pyinstaller --noconfirm --clean --onefile --windowed --name "MAINTAIN AI IoT Gateway" gateway.py
+
       - name: Read application version
         shell: pwsh
         run: |
@@ -38,21 +44,64 @@ jobs:
           if (-not $version) { throw 'Could not parse application version' }
           "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Building version $version"
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup --no-progress -y
-      - name: Build Windows installer
-        shell: pwsh
+
+      - name: Upload unsigned Windows installer
+        if: runner.os == 'Windows_NT'
+        id: upload-unsigned-windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintain-ai-iot-gateway-windows-unsigned
+          path: 'installer/installer-output/MAINTAIN-AI-IoT-Gateway-Setup.exe'
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Sign Windows installer with SignPath
+        if: runner.os == 'Windows_NT' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: sign-windows
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-windows.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-windows
+          wait-for-completion-timeout-in-seconds: 900
+
+      - name: Verify signed Windows installer
+        if: runner.os == 'Windows_NT' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: powershell
         run: |
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found at $iscc" }
-          & $iscc "/DMyAppVersion=$env:APP_VERSION" "installer\maintain-ai-iot-gateway.iss"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installer = Get-ChildItem -Path signed-windows -Filter *.exe -Recurse | Select-Object -First 1
+          if (-not $installer) { throw 'SignPath did not return a signed Windows installer.' }
+          $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
+          if ($signature.Status -ne 'Valid') { throw "Windows Authenticode signature is not valid: $($signature.Status)" }
+
+      - name: Upload signed Windows installer
+        if: runner.os == 'Windows_NT' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintain-ai-iot-gateway-installer
+          path: signed-windows/**/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload unsigned Windows installer for development
+        if: runner.os == 'Windows_NT' && vars.SIGNPATH_ORGANIZATION_ID == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintain-ai-iot-gateway-installer-unsigned-development
+          path: 'installer/installer-output/MAINTAIN-AI-IoT-Gateway-Setup.exe'
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
           name: maintain-ai-iot-gateway-windows
           path: 'dist/MAINTAIN AI IoT Gateway.exe'
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:

@@ -68,7 +68,7 @@ class SerialManager:
                 return
             self._serial = serial.Serial(self._port, self.baud_rate, timeout=1)
             if self.protocol == "marlin":
-                self._serial.write(b"M105\n")
+                self._serial.write(b"M105\nM114\n")
                 self._serial.flush()
 
     def _poll_marlin(self) -> None:
@@ -76,7 +76,7 @@ class SerialManager:
             return
         with self._lock:
             if self._serial and self._serial.is_open:
-                self._serial.write(b"M105\n")
+                self._serial.write(b"M105\nM114\n")
                 self._serial.flush()
 
     def _read_loop(self) -> None:

@@ -1,6 +1,7 @@
 from gateway.api_client import ApiClient
 from gateway.config import get_device_key, set_device_key
 from gateway.serial_manager import SerialManager
+from gateway.telemetry_worker import TelemetryWorker
 
 
 class DeviceManager:
@@ -18,6 +19,7 @@ class DeviceManager:
         self.api_url = api_url
         self.protocol = protocol
         self.device_key = get_device_key(device_id)
+        self.uploader = TelemetryWorker(api_url, self.device_key)
 
     def set_protocol(self, protocol: str) -> None:
         self.protocol = protocol
@@ -26,9 +28,17 @@ class DeviceManager:
     def set_device_key(self, value: str) -> None:
         self.device_key = value.strip()
         set_device_key(self.device_id, self.device_key)
+        self.uploader.set_credentials(self.api_url, self.device_key)
+
+    def set_api_url(self, value: str) -> None:
+        self.api_url = value.strip()
+        self.uploader.set_credentials(self.api_url, self.device_key)
 
     def api(self) -> ApiClient:
         return ApiClient(self.api_url, self.device_key)
+
+    def send_readings(self, readings, callback=None) -> None:
+        self.uploader.submit(readings, callback)
 
     def test_backend(self) -> tuple[bool, str]:
         if not self.device_key:
@@ -37,3 +47,7 @@ class DeviceManager:
 
     def disconnect(self) -> None:
         self.serial.disconnect()
+
+    def close(self) -> None:
+        self.serial.disconnect()
+        self.uploader.stop()

@@ -36,6 +36,10 @@ class AddDeviceDialog(QDialog):
             self.port.addItem(device["port"])
         if device:
             self.port.setCurrentText(device.get("port", ""))
+        self.protocol = QComboBox()
+        self.protocol.addItem("Arduino / JSON", "json")
+        self.protocol.addItem("Marlin / Ender-3", "marlin")
+        self.protocol.setCurrentIndex(max(0, self.protocol.findData(device.get("protocol", "json") if device else "json")))
         self.baud = QComboBox(); self.baud.addItems(["9600", "57600", "115200", "230400"])
         self.baud.setCurrentText(str(device.get("baud_rate", 115200) if device else 115200))
         self.key = QLineEdit(); self.key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -43,6 +47,7 @@ class AddDeviceDialog(QDialog):
         form.addRow("Gateway name", self.name)
         form.addRow("Machine", self.machine)
         form.addRow("Serial port", self.port)
+        form.addRow("Protocol", self.protocol)
         form.addRow("Baud rate", self.baud)
         form.addRow("Device key", self.key)
         hint = QLabel("Each physical machine must use its own key generated in MAINTAIN AI.")
@@ -53,8 +58,8 @@ class AddDeviceDialog(QDialog):
 
     def values(self):
         return {"name": self.name.text().strip(), "machine": self.machine.text().strip(),
-                "port": self.port.currentText().strip(), "baud_rate": int(self.baud.currentText()),
-                "device_key": self.key.text().strip()}
+                "port": self.port.currentText().strip(), "protocol": self.protocol.currentData(),
+                "baud_rate": int(self.baud.currentText()), "device_key": self.key.text().strip()}
 
 
 class MainWindow(QMainWindow):
@@ -86,7 +91,7 @@ class MainWindow(QMainWindow):
 
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.container = QWidget(); self.layout = QVBoxLayout(self.container); self.layout.setContentsMargins(0, 2, 8, 2); self.layout.setSpacing(14); self.layout.addStretch(); self.scroll.setWidget(self.container); outer.addWidget(self.scroll, 1)
-        self.empty = QLabel("No physical machines paired yet\nPair an Arduino / ESP32 gateway and paste the machine-specific device key."); self.empty.setObjectName("empty"); self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter); self.layout.insertWidget(0, self.empty)
+        self.empty = QLabel("No physical machines paired yet\nPair an Arduino / ESP32 gateway or a Marlin printer and paste the machine-specific device key."); self.empty.setObjectName("empty"); self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter); self.layout.insertWidget(0, self.empty)
         self.setCentralWidget(root)
         self.setStyleSheet("""
             QMainWindow { background:#08111d; color:#e9f1fa; } QLabel { color:#b7c4d4; }
@@ -142,7 +147,7 @@ class MainWindow(QMainWindow):
             if name in data["reading_labels"]: data["reading_labels"][name].setText(f"{value:g} {unit}")
 
     @staticmethod
-    def device_meta(rec): return f"{rec.get('machine') or 'Unpaired machine'}  ·  {rec.get('port') or 'No USB port'}  ·  {rec.get('baud_rate',115200)} baud"
+    def device_meta(rec): return f"{rec.get('machine') or 'Unpaired machine'}  ·  {rec.get('port') or 'No USB port'}  ·  {rec.get('baud_rate',115200)} baud  ·  {('Marlin' if rec.get('protocol') == 'marlin' else 'JSON')}"
 
     def add_device(self):
         dialog=AddDeviceDialog(self, ports=self.ports())
@@ -150,7 +155,7 @@ class MainWindow(QMainWindow):
         v=dialog.values()
         if not v["name"]: v["name"]=f"Machine {len(self.devices)+1:02d}"
         if not v["port"] or not v["device_key"]: QMessageBox.warning(self,"Pair machine","Machine name, serial port and device key are required."); return
-        did=self.create_device({k:v[k] for k in ("name","machine","port","baud_rate")}); self.devices[did]["manager"].set_device_key(v["device_key"]); self.persist(); self.update_summary()
+        did=self.create_device({k:v[k] for k in ("name","machine","port","baud_rate","protocol")}); self.devices[did]["manager"].set_device_key(v["device_key"]); self.persist(); self.update_summary()
 
     def edit_device(self,did):
         data=self.devices[did]; dialog=AddDeviceDialog(self,data["config"],self.ports())
@@ -158,7 +163,7 @@ class MainWindow(QMainWindow):
         v=dialog.values()
         if not v["name"] or not v["port"]: QMessageBox.warning(self,"Machine","Name and serial port are required."); return
         if data["manager"].serial.connected:self.disconnect_device(did)
-        data["config"].update({k:v[k] for k in ("name","machine","port","baud_rate")}); data["manager"].baud_rate=v["baud_rate"]
+        data["config"].update({k:v[k] for k in ("name","machine","port","baud_rate","protocol")}); data["manager"].baud_rate=v["baud_rate"]; data["manager"].serial.baud_rate=v["baud_rate"]; data["manager"].set_protocol(v["protocol"])
         if v["device_key"]: data["manager"].set_device_key(v["device_key"])
         data["title"].setText(data["config"]["name"]); data["meta"].setText(self.device_meta(data["config"])); self.persist()
 
@@ -171,7 +176,7 @@ class MainWindow(QMainWindow):
         data=self.devices[did]; key=get_device_key(did); rec=data["config"]
         if not key: QMessageBox.warning(self,"Device key","No device key is stored for this machine."); return
         try:
-            data["manager"].api_url=self.backend.text().strip() or self.api_url; data["manager"].set_device_key(key); data["manager"].baud_rate=int(rec.get("baud_rate",115200))
+            data["manager"].api_url=self.backend.text().strip() or self.api_url; data["manager"].set_device_key(key); data["manager"].baud_rate=int(rec.get("baud_rate",115200)); data["manager"].serial.baud_rate=data["manager"].baud_rate; data["manager"].set_protocol(rec.get("protocol","json"))
             data["manager"].serial.connect(rec["port"],lambda p,d=did:self.signals.readings.emit(d,p),lambda m,d=did:self.signals.error.emit(d,m))
             data["status"].setText("● Connected · auto-reconnect enabled"); data["connect"].setEnabled(False); data["disconnect"].setEnabled(True); data["info"].setText("USB connected · waiting for telemetry"); self.update_summary()
         except Exception as exc: QMessageBox.critical(self,"Connection failed",str(exc))
@@ -185,7 +190,7 @@ class MainWindow(QMainWindow):
         data=self.devices.get(did)
         if not data:return
         readings=validate_readings(payload)
-        if not readings: data["info"].setText("Received serial JSON, but no valid telemetry signals were found"); return
+        if not readings: data["info"].setText("Received serial data, but no valid telemetry signals were found"); return
         failures=[]
         for name,value,unit in readings:
             data["readings"][name]=(value,unit)

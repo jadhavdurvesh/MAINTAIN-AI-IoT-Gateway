@@ -140,7 +140,7 @@ class MainWindow(QMainWindow):
             item=grid.takeAt(0); w=item.widget()
             if w: w.deleteLater()
         data["reading_labels"]={}
-        names=list(data["readings"].keys()) or ["temperature","humidity","vibration","current"]
+        names=list(data["readings"].keys()) or ["nozzle_temperature","bed_temperature","x_position","y_position","z_position"]
         for i,name in enumerate(names[:24]):
             box=QFrame(); box.setObjectName("reading"); v=QVBoxLayout(box); v.setContentsMargins(12,9,12,9); n=QLabel(name.replace("_"," ").title()); n.setObjectName("readingName"); val=QLabel("—"); val.setObjectName("readingValue"); v.addWidget(n); v.addWidget(val); data["reading_labels"][name]=val; grid.addWidget(box,i//4,i%4)
         for name,(value,unit) in data["readings"].items():

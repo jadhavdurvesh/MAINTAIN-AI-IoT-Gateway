@@ -76,8 +76,7 @@ class SerialManager:
             return
         with self._lock:
             if self._serial and self._serial.is_open:
-                self._serial.write(b"M105\n")
-                self._serial.flush()
+                # Poll both thermal data and the current XYZ tool position.\n                # M105 reports temperatures; M114 reports X/Y/Z/E position.\n                self._serial.write(b"M105\\nM114\\n")\n                self._serial.flush()
 
     def _read_loop(self) -> None:
         first_failure_reported = False

@@ -48,10 +48,27 @@ jobs:
           "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Building version $version"
 
+      - name: Require SignPath configuration for release builds
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:SIGNPATH_ORGANIZATION_ID)) { $missing += 'SIGNPATH_ORGANIZATION_ID repository variable' }
+          if ([string]::IsNullOrWhiteSpace($env:SIGNPATH_PROJECT_SLUG)) { $missing += 'SIGNPATH_PROJECT_SLUG repository variable' }
+          if ([string]::IsNullOrWhiteSpace($env:SIGNPATH_SIGNING_POLICY_SLUG)) { $missing += 'SIGNPATH_SIGNING_POLICY_SLUG repository variable' }
+          if ([string]::IsNullOrWhiteSpace($env:SIGNPATH_API_TOKEN)) { $missing += 'SIGNPATH_API_TOKEN repository secret' }
+          if ($missing.Count -gt 0) {
+            throw "Signed release build cannot continue. Configure: $($missing -join ', '). This workflow will never publish an unsigned release artifact from main."
+          }
       # Sign the standalone EXE first so the installer embeds the signed copy.
       - name: Upload unsigned Windows executable
         id: upload-unsigned-exe
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: maintain-ai-iot-gateway-exe-unsigned
@@ -87,7 +104,7 @@ jobs:
           Write-Host "Signed EXE: $($signature.SignerCertificate.Subject)"
 
       - name: Upload unsigned Windows executable for development
-        if: vars.SIGNPATH_ORGANIZATION_ID == ''
+        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: maintain-ai-iot-gateway-windows-unsigned-development
@@ -172,3 +189,113 @@ jobs:
           path: 'installer/installer-output/MAINTAIN-AI-IoT-Gateway-Setup.exe'
           if-no-files-found: error
           retention-days: 7
+
+  build-linux:
+    name: Build Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            deb_arch: arm64
+          - arch: amd64
+            runner: ubuntu-24.04
+            deb_arch: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1 \
+            libegl1 \
+            libxkbcommon0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            libdbus-1-3 \
+            libfontconfig1 \
+            libfreetype6 \
+            libsecret-1-0 \
+            dpkg-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # PySide6 6.7.3 publishes manylinux_2_28 ARM64/x86-64 wheels, keeping this artifact suitable for Raspberry Pi OS Bookworm.
+          python -m pip install "PySide6==6.7.3" "pyserial>=3.5,<4" "requests>=2.32,<3" "keyring>=25,<26" pyinstaller
+
+      - name: Read application version
+        shell: bash
+        run: |
+          VERSION=$(python -c "from gateway import __version__; print(__version__)")
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building MAINTAIN AI IoT Gateway $VERSION for Linux ${{ matrix.arch }}"
+
+      - name: Build Linux executable
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name "maintain-ai-iot-gateway" gateway.py
+          test -f "dist/maintain-ai-iot-gateway"
+
+      - name: Build Debian package
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG="package"
+          rm -rf "$PKG"
+          mkdir -p "$PKG/DEBIAN"
+          mkdir -p "$PKG/usr/bin"
+          mkdir -p "$PKG/usr/share/applications"
+          install -m 0755 "dist/maintain-ai-iot-gateway" "$PKG/usr/bin/maintain-ai-iot-gateway"
+          cat > "$PKG/usr/share/applications/maintain-ai-iot-gateway.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=MAINTAIN AI IoT Gateway
+          Comment=MAINTAIN AI physical machine telemetry gateway
+          Exec=/usr/bin/maintain-ai-iot-gateway
+          Terminal=false
+          Categories=Utility;Network;
+          EOF
+          chmod 0644 "$PKG/usr/share/applications/maintain-ai-iot-gateway.desktop"
+          cat > "$PKG/DEBIAN/control" <<EOF
+          Package: maintain-ai-iot-gateway
+          Version: $APP_VERSION
+          Section: utils
+          Priority: optional
+          Architecture: ${{ matrix.deb_arch }}
+          Maintainer: MAINTAIN AI
+          Description: MAINTAIN AI IoT Gateway
+           Desktop gateway for physical machine telemetry and serial-connected devices.
+          Depends: libc6, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libdbus-1-3, libfontconfig1, libfreetype6, libsecret-1-0
+          EOF
+          dpkg-deb --build --root-owner-group "$PKG" "MAINTAIN-AI-IoT-Gateway-${APP_VERSION}-linux-${{ matrix.arch }}.deb"
+
+      - name: Validate package
+        shell: bash
+        run: |
+          dpkg-deb --info "MAINTAIN-AI-IoT-Gateway-${APP_VERSION}-linux-${{ matrix.arch }}.deb"
+          dpkg-deb --contents "MAINTAIN-AI-IoT-Gateway-${APP_VERSION}-linux-${{ matrix.arch }}.deb"
+          file "dist/maintain-ai-iot-gateway"
+          test -s "MAINTAIN-AI-IoT-Gateway-${APP_VERSION}-linux-${{ matrix.arch }}.deb"
+
+      - name: Upload Linux installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintain-ai-iot-gateway-linux-${{ matrix.arch }}
+          path: "MAINTAIN-AI-IoT-Gateway-${{ env.APP_VERSION }}-linux-${{ matrix.arch }}.deb"
+          if-no-files-found: error
+          retention-days: 14

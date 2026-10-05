@@ -1,6 +1,7 @@
 from gateway.api_client import ApiClient
 from gateway.config import get_device_key, set_device_key
 from gateway.serial_manager import SerialManager
+from gateway.safety_command_worker import SafetyCommandWorker
 from gateway.telemetry_worker import TelemetryWorker
 
 
@@ -20,6 +21,7 @@ class DeviceManager:
         self.protocol = protocol
         self.device_key = get_device_key(device_id)
         self.uploader = TelemetryWorker(api_url, self.device_key)
+        self.safety_worker = SafetyCommandWorker(api_url, self.device_key, self.serial)
 
     def set_protocol(self, protocol: str) -> None:
         self.protocol = protocol
@@ -29,6 +31,7 @@ class DeviceManager:
         self.device_key = value.strip()
         set_device_key(self.device_id, self.device_key)
         self.uploader.set_credentials(self.api_url, self.device_key)
+        self.safety_worker.set_credentials(self.api_url, self.device_key)
 
     def set_api_url(self, value: str) -> None:
         self.api_url = value.strip()
@@ -50,4 +53,5 @@ class DeviceManager:
 
     def close(self) -> None:
         self.serial.disconnect()
+        self.safety_worker.stop()
         self.uploader.stop()

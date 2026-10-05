@@ -218,6 +218,21 @@ class MainWindow(QMainWindow):
     def handle_readings(self,did,payload):
         data=self.devices.get(did)
         if not data:return
+
+        # The Arduino safety firmware sends a shutdown acknowledgement as a
+        # command envelope rather than telemetry. Acknowledge it upstream
+        # without changing the existing telemetry validation/upload path.
+        if isinstance(payload, dict) and payload.get("type") == "shutdown_ack":
+            event_id = payload.get("event_id")
+            if event_id is not None:
+                try:
+                    data["manager"].acknowledge_safety_command(int(event_id))
+                except (TypeError, ValueError):
+                    pass
+            data["status"].setText("● Connected · safety shutdown acknowledged")
+            data["info"].setText("Arduino acknowledged the safety shutdown command")
+            return
+
         readings=validate_readings(payload)
         if not readings: data["info"].setText("Received serial data, but no valid telemetry signals were found"); return
         for name,value,unit in readings:

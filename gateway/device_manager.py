@@ -43,6 +43,9 @@ class DeviceManager:
     def send_readings(self, readings, callback=None) -> None:
         self.uploader.submit(readings, callback)
 
+    def acknowledge_safety_command(self, event_id: int) -> None:
+        self.safety_worker.acknowledge(event_id)
+
     def test_backend(self) -> tuple[bool, str]:
         if not self.device_key:
             return False, "Enter the machine IoT device key first"

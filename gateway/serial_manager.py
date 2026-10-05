@@ -141,6 +141,15 @@ class SerialManager:
             thread.join(timeout=1.5)
         self._thread = None
 
+    def write_line(self, line: str) -> None:
+        """Send one newline-delimited JSON command to the connected device."""
+        payload = (line.rstrip("\r\n") + "\n").encode("utf-8")
+        with self._lock:
+            if not self._serial or not self._serial.is_open:
+                raise serial.SerialException("serial device is not connected")
+            self._serial.write(payload)
+            self._serial.flush()
+
     @property
     def connected(self) -> bool:
         with self._lock:

@@ -15,6 +15,15 @@ from gateway.serial_manager import SerialManager
 from protocol.validator import validate_readings
 
 
+ARDUINO_SIGNAL_PROFILE = [
+    "temperature", "humidity", "vibration", "current", "voltage",
+    "pressure", "flow", "speed", "load", "rpm", "distance",
+]
+MARLIN_SIGNAL_PROFILE = [
+    "nozzle_temperature", "bed_temperature", "x_position", "y_position", "z_position",
+]
+
+
 class DeviceSignals(QObject):
     readings = Signal(str, dict)
     error = Signal(str, str)
@@ -39,9 +48,14 @@ class AddDeviceDialog(QDialog):
         if device:
             self.port.setCurrentText(device.get("port", ""))
         self.protocol = QComboBox()
-        self.protocol.addItem("Arduino / JSON", "json")
+        self.protocol.addItem("Arduino / Generic JSON", "json")
         self.protocol.addItem("Marlin / Ender-3", "marlin")
         self.protocol.setCurrentIndex(max(0, self.protocol.findData(device.get("protocol", "json") if device else "json")))
+        self.profile_hint = QLabel()
+        self.profile_hint.setWordWrap(True)
+        self.profile_hint.setObjectName("hint")
+        self.protocol.currentIndexChanged.connect(self.update_profile_hint)
+        self.update_profile_hint()
         self.baud = QComboBox(); self.baud.addItems(["9600", "57600", "115200", "230400"])
         self.baud.setCurrentText(str(device.get("baud_rate", 115200) if device else 115200))
         self.key = QLineEdit(); self.key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -50,6 +64,7 @@ class AddDeviceDialog(QDialog):
         form.addRow("Machine", self.machine)
         form.addRow("Serial port", self.port)
         form.addRow("Protocol", self.protocol)
+        form.addRow(self.profile_hint)
         form.addRow("Baud rate", self.baud)
         form.addRow("Device key", self.key)
         hint = QLabel("Each physical machine must use its own key generated in MAINTAIN AI.")
@@ -57,6 +72,13 @@ class AddDeviceDialog(QDialog):
         form.addRow(hint)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); form.addRow(buttons)
+
+    def update_profile_hint(self):
+        if self.protocol.currentData() == "marlin":
+            text = "Ender-3 / Marlin telemetry: nozzle temperature, bed temperature, X/Y/Z position."
+        else:
+            text = "Arduino / JSON telemetry: temperature, humidity, vibration, current, voltage, pressure, flow, speed, load, RPM, distance. Additional validated signals are accepted too."
+        self.profile_hint.setText(text)
 
     def values(self):
         return {"name": self.name.text().strip(), "machine": self.machine.text().strip(),
@@ -142,14 +164,19 @@ class MainWindow(QMainWindow):
             item=grid.takeAt(0); w=item.widget()
             if w: w.deleteLater()
         data["reading_labels"]={}
-        names=list(data["readings"].keys()) or ["nozzle_temperature","bed_temperature","x_position","y_position","z_position"]
+        if data["readings"]:
+            names = list(data["readings"].keys())
+        elif data["config"].get("protocol") == "marlin":
+            names = MARLIN_SIGNAL_PROFILE
+        else:
+            names = ARDUINO_SIGNAL_PROFILE
         for i,name in enumerate(names[:24]):
             box=QFrame(); box.setObjectName("reading"); v=QVBoxLayout(box); v.setContentsMargins(12,9,12,9); n=QLabel(name.replace("_"," ").title()); n.setObjectName("readingName"); val=QLabel("—"); val.setObjectName("readingValue"); v.addWidget(n); v.addWidget(val); data["reading_labels"][name]=val; grid.addWidget(box,i//4,i%4)
         for name,(value,unit) in data["readings"].items():
             if name in data["reading_labels"]: data["reading_labels"][name].setText(f"{value:g} {unit}")
 
     @staticmethod
-    def device_meta(rec): return f"{rec.get('machine') or 'Unpaired machine'}  ·  {rec.get('port') or 'No USB port'}  ·  {rec.get('baud_rate',115200)} baud  ·  {('Marlin' if rec.get('protocol') == 'marlin' else 'JSON')}"
+    def device_meta(rec): return f"{rec.get('machine') or 'Unpaired machine'}  ·  {rec.get('port') or 'No USB port'}  ·  {rec.get('baud_rate',115200)} baud  ·  {('Marlin / Ender-3' if rec.get('protocol') == 'marlin' else 'Arduino / Generic JSON')}"
 
     def add_device(self):
         dialog=AddDeviceDialog(self, ports=self.ports())

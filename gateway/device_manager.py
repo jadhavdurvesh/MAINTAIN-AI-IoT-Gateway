@@ -36,6 +36,7 @@ class DeviceManager:
     def set_api_url(self, value: str) -> None:
         self.api_url = value.strip()
         self.uploader.set_credentials(self.api_url, self.device_key)
+        self.safety_worker.set_credentials(self.api_url, self.device_key)
 
     def api(self) -> ApiClient:
         return ApiClient(self.api_url, self.device_key)

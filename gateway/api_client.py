@@ -94,6 +94,29 @@ class ApiClient:
             self._queue(event_id, payload)
             return False, None, str(exc)
 
+
+    def _command_url(self, suffix: str) -> str:
+        base = self.url.removesuffix("/api/devices/ingest").rstrip("/")
+        return base + "/api/devices/" + suffix
+
+    def pending_command(self) -> dict | None:
+        response = self.session.get(
+            self._command_url("commands"),
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def ack_command(self, event_id: int) -> bool:
+        response = self.session.post(
+            self._command_url("commands/ack"),
+            json={"event_id": int(event_id)},
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        return response.ok
+
     def test_connection(self) -> tuple[bool, str]:
         if not self.url:
             return False, "MAINTAIN AI API URL is empty"
